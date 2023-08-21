@@ -1,0 +1,109 @@
+########################################
+## Analysis of the miR from brain tissue                              ##
+## Creation of differential lists using DESeq2                    ##
+## Data from WSU                                                                        ##
+## August 9, 2016	                                                                      ##
+########################################
+
+# directory #
+
+	setwd("...")
+
+# packages and functions #
+
+	require(DESeq2)
+	require(VennDiagram)
+
+	corner = function(XX, NN=5){XX[1:NN, 1:NN]}
+
+# data #
+	one = read.delim("raw.counts.txt", header=T, as.is=T)
+
+	one.mat = as.matrix(one[,-1])
+	rownames(one.mat) = one[,1]
+
+	table(substr(colnames(one.mat),1,1))
+
+	# assign group names #
+	one.matH = one.mat[,substr(colnames(one.mat),1,1) %in% c('C','N','P')]
+	hum.coldat = data.frame(sample = colnames(one.matH), group = substr(colnames(one.matH),1,1), num=rep(1:5,3))
+
+	# create DESeq formatted data #
+	dds <- DESeqDataSetFromMatrix(countData = one.matH,
+			colData = hum.coldat,
+			design = ~ group)
+	dim(dds)
+	#[1] 2588   15
+
+	# drop missing data
+	dds <- dds[ rowSums(counts(dds)) > 1, ]
+	dim(dds)
+	#[1] 2398   15
+
+
+	dds$group <- relevel(dds$group, ref="C")
+
+	par(mar=c(8,5,2,2))
+	boxplot(log10(assays(dds)[["cooks"]]), range=0, las=2)
+
+	# standardize #
+	rld <- rlog(dds, blind=FALSE)	
+
+	pdf("PCAofMiRdata.pdf")
+		plotPCA(rld, intgroup=c("group"))
+		plotPCA(rld, intgroup=c("group", "num"))
+	dev.off();
+
+# Analysis for differential expression #
+	dds <- DESeq(dds)
+	res <- results(dds)
+		plotMA(res, main="DESeq2", ylim=c(-2,2))	
+	resMLE <- results(dds, addMLE=TRUE)
+		plotMA(resMLE, MLE=TRUE, main="unshrunken LFC", ylim=c(-2,2))
+	# PLS vs CTRL #
+	res.P = results(dds, contrast=c("group", "C", "P"))
+	write.csv(as.data.frame(res.P), file="PvsC_results.csv")
+	df.P = as.data.frame(res.P)
+
+	# NLA vs CTRL #
+	res.N = results(dds, contrast=c("group", "C", "N"))
+	write.csv(as.data.frame(res.N), file="NvsC_results.csv")	
+	df.N = as.data.frame(res.N)
+
+	# PLS vs NLA #
+	res.NP = results(dds, contrast=c("group", "N", "P"))
+	write.csv(as.data.frame(res.NP), file="PvsN_results.csv")
+	df.NP = as.data.frame(res.NP)
+
+# Create Venn Diagram #
+	table(P =df.P$padj<=0.05) #Area1
+	table(N =df.N$padj<=0.05) #Area2
+	table(NP=df.NP$padj<=0.05) #Area3
+	table(P =df.P$padj<=0.05, N =df.N$padj<=0.05) #N12
+	table(P =df.P$padj<=0.05, NP =df.NP$padj<=0.05) #N13
+	table(N =df.N$padj<=0.05, NP =df.NP$padj<=0.05) #N23
+	table(P =df.P$padj<=0.05, N=df.N$padj<=0.05, NP=df.NP$padj<=0.05) #N123
+
+	venn.plot <- draw.triple.venn(
+	 area1 = 186,
+	 area2 = 375,
+	 area3 = 210,
+	 n12 = 156,
+	 n23 = 160,
+	 n13 = 54,
+	 n123 = 37,
+	 category = c("NvC", "PvC", "PvN"),
+	 fill = c("blue", "red", "green"),
+	 lty = "blank",
+	 cex = 2,
+	 cat.cex = 2,
+	 cat.col = "black" #c("blue", "red", "green")
+	 );
+	pdf("VennDiagram_AdjP05.pdf")
+	grid.draw(venn.plot);
+	dev.off()
+
+
+plotCounts(dds, gene=which.min(res$padj), intgroup="group")
+plotCounts(dds, gene=which(rownames(res)=="hsa-miR-323a-5p"), intgroup="group", pch=15)
+
