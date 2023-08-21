@@ -1,0 +1,183 @@
+###########################################
+## Analysis of the metabolites from brain tissue        	##
+## Creation of differential lists using lme4 / lmerTest 	##
+## Data from MRC2                                      			##
+## Contains 29 human samples + 9 model samples          	##
+## Only human samples retained for analysis             	##
+## 4 Tissues types are measured:                        		##
+##   Healthy control,                                   			##
+##   Plaque Shadow (PLS),                               		##
+##   Normal Looking Area (NLA),                         		##	
+##   Other                                              			##
+## March 8, 2016	                                      			##
+###########################################
+
+# directory #
+
+  setwd(...)
+
+#packages #
+
+  require(lme4)
+  require(lmerTest)
+
+# functions #
+  corner = function(XX, NN=5){XX[1:NN,1:NN]}
+
+  panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+  {
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y, use ="pairwise.complete.obs"))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor*0.5 )
+  }
+
+# data #
+  # negative mode 
+  neg.data = read.delim("NegativeMode_data.txt", header=T, as.is=T)
+  neg.sample = read.delim("NegativeMode_sampleList.txt", header=T, as.is=T)
+  # extract analysis matrix
+  neg.mat = as.matrix(neg.data[,2:39])
+  colnames(neg.mat) = substr(colnames(neg.mat),31,39)
+  rownames(neg.mat) = neg.data[,1]
+
+  # positive mode 
+  pos.data = read.delim("PositiveMode_data.txt", header=T, as.is=T)
+  pos.sample = read.delim("PositiveMode_sampleList.txt", header=T, as.is=T)
+  # extract analysis matrix
+  pos.mat = as.matrix(pos.data[,2:39])
+  colnames(pos.mat) = substr(colnames(pos.mat),31,39)
+  rownames(pos.mat) = pos.data[,1]
+  
+  # set sample / column names
+  all.sample = read.delim("SampleIdentifiers.txt", header=T, as.is=T)
+  head(all.sample)
+  
+  # subset by case / sample type 
+  table(all.sample$Species)
+  human.set = all.sample$Sample.ID[all.sample$Species=='Human']
+  human.ctrl.set = all.sample$Sample.ID[all.sample$Species=='Human' & all.sample$Disease=='Non']
+  human.xald.set = all.sample$Sample.ID[all.sample$Species=='Human' & all.sample$Disease=='ALD']
+  human.xald.set1 = all.sample$Sample.ID[all.sample$Species=='Human' & all.sample$Disease=='ALD' & all.sample$Number==1]
+  human.xald.set2 = all.sample$Sample.ID[all.sample$Species=='Human' & all.sample$Disease=='ALD' & all.sample$Number==2]
+  human.xald.set3 = all.sample$Sample.ID[all.sample$Species=='Human' & all.sample$Disease=='ALD' & all.sample$Number==3]
+  human.xald.set4 = all.sample$Sample.ID[all.sample$Species=='Human' & all.sample$Disease=='ALD' & all.sample$Number==4]
+  human.xald.set5 = all.sample$Sample.ID[all.sample$Species=='Human' & all.sample$Disease=='ALD' & all.sample$Number==5]
+  
+# analysis #
+par(mfrow=c(1,3))
+
+  # assess missingness #
+  # create matrix for missing data
+  neg.mat.na = is.na(neg.mat)
+  # calculate frequency of non-missing
+  neg.freq.human = 1-apply(neg.mat.na[,colnames(neg.mat.na) %in% human.set], 1, sum)/29
+  hist(neg.freq.human)
+  # number measured in all human samples
+  table(neg.freq.human==1) 
+  # retain those metabolites with at leaset 80% observed
+  neg.mat2 = neg.mat[neg.freq.human>0.8,] 
+  
+  #par(ask=T)
+  pdf("NegativeMode_Correlations.pdf")
+  pairs(log10(neg.mat2[,colnames(neg.mat2) %in% human.ctrl.set]), lower.panel = panel.cor, main="Controls")
+  pairs(log10(neg.mat2[,colnames(neg.mat2) %in% human.xald.set1]), lower.panel = panel.cor, main="Patient 1")
+  pairs(log10(neg.mat2[,colnames(neg.mat2) %in% human.xald.set2]), lower.panel = panel.cor, main="Patient 2")
+  pairs(log10(neg.mat2[,colnames(neg.mat2) %in% human.xald.set3]), lower.panel = panel.cor, main="Patient 3")
+  pairs(log10(neg.mat2[,colnames(neg.mat2) %in% human.xald.set4]), lower.panel = panel.cor, main="Patient 4")
+  pairs(log10(neg.mat2[,colnames(neg.mat2) %in% human.xald.set5]), lower.panel = panel.cor, main="Patient 5")
+  dev.off()
+  
+  # restructure for specimens in rows
+  # add sample information
+  
+  neg.mat2t = t(neg.mat2)
+  rownames(all.sample)=all.sample$Sample.ID
+  neg.df = merge(all.sample, neg.mat2t, by='row.names')
+  corner(neg.df,NN=10)
+  neg.df = neg.df[neg.df$Species =='Human',]
+  neg.df$Type = as.factor(neg.df$Type)
+  save(neg.df, file="NegativeModeDF.Rdata")
+  
+  # establish model
+  fm1 <- lmer( log10(neg.df[,9]) ~ Type + (1 | Group), neg.df)
+  out1 = summary(fm1)
+  aov1 = anova(fm1)
+  diff1 = difflsmeans(fm1)
+  c(aov1$"Pr(>F)", diff1$"Pr(>|t|)")
+  
+  # apply model, per metabolite
+  neg.outp = matrix(NA, ncol=7, nrow=dim(neg.mat2t)[2])
+  colnames(neg.outp) = c("ANOVA.F", rownames(diff1))
+  rownames(neg.outp) = colnames(neg.df)[-c(1:8)]
+  for(k in 1:dim(neg.mat2t)[2]){
+    fm0 <- lmer(log10(neg.df[,(k+8)]) ~ Type + (1 | Group), neg.df)
+    out0 = summary(fm0)
+    aov0 = anova(fm0)
+    diff0 = difflsmeans(fm0)
+    neg.outp[k,] = c(aov0$"Pr(>F)", diff0$"Pr(>|t|)")
+  }
+
+  # add FDR estimation  
+  tmp = p.adjust(neg.outp[,1], method="BH")
+  neg.outp = cbind(neg.outp, FDR = tmp)
+  save(neg.outp, file="NegativeModeANOVA.Rdata")
+
+    
+## Positive mode ##
+  par(mfrow=c(1,3))
+  
+  # assess missingness #
+  # create matrix for missing data
+  pos.mat.na = is.na(pos.mat)
+  # calculate frequency of non-missing
+  pos.freq.human = 1-apply(pos.mat.na[,colnames(pos.mat.na) %in% human.set], 1, sum)/29
+  hist(pos.freq.human)
+  # number measured in all human samples
+  table(pos.freq.human==1)
+  # retain those metabolites with at leaset 80% observed
+  pos.mat2 = pos.mat[pos.freq.human>0.8,]
+  dim(pos.mat2) #keep 1491
+  
+  #par(ask=T)
+  pdf("PositiveMode_Correlations.pdf")
+  pairs(log10(pos.mat2[,colnames(pos.mat2) %in% human.ctrl.set]), lower.panel = panel.cor, main="Controls")
+  pairs(log10(pos.mat2[,colnames(pos.mat2) %in% human.xald.set1]), lower.panel = panel.cor, main="Patient 1")
+  pairs(log10(pos.mat2[,colnames(pos.mat2) %in% human.xald.set2]), lower.panel = panel.cor, main="Patient 2")
+  pairs(log10(pos.mat2[,colnames(pos.mat2) %in% human.xald.set3]), lower.panel = panel.cor, main="Patient 3")
+  pairs(log10(pos.mat2[,colnames(pos.mat2) %in% human.xald.set4]), lower.panel = panel.cor, main="Patient 4")
+  pairs(log10(pos.mat2[,colnames(pos.mat2) %in% human.xald.set5]), lower.panel = panel.cor, main="Patient 5")
+  dev.off()
+  
+  # restructure for specimens in rows
+  # add sample information
+  pos.mat2t = t(pos.mat2)
+  rownames(all.sample)=all.sample$Sample.ID
+  pos.df = merge(all.sample, pos.mat2t, by='row.names')
+  pos.df = pos.df[pos.df$Species =='Human',]
+  pos.df$Type = as.factor(pos.df$Type)
+  save(pos.df, file="PositiveModeDF.Rdata")
+  
+  pos.outp = matrix(NA, ncol=7, nrow=dim(pos.mat2t)[2])
+  colnames(pos.outp)[1:7] = c("ANOVA.F", rownames(diff1))
+  rownames(pos.outp) = colnames(pos.df)[-c(1:8)]
+  
+  for(k in 1:dim(pos.mat2t)[2]){
+    fm0 <- lmer( log10(pos.df[,(k+8)]) ~ Type + (1 | Group), pos.df)
+    out0 = summary(fm0)
+    aov0 = anova(fm0)
+    diff0 = difflsmeans(fm0)
+    pos.outp[k,] = c(aov0$"Pr(>F)", diff0$"Pr(>|t|)")
+  }
+  dim(pos.outp)
+  
+  tmp.p = p.adjust(pos.outp[,1], method="BH")
+  pos.outp = cbind(pos.outp, FDR=tmp.p)
+  save(pos.outp, file="PositiveModeANOVA.Rdata")
+  
+  
+  
+  
